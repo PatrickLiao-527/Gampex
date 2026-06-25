@@ -1,26 +1,49 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ── Gampex design tokens (from DESIGN.md — Notion analysis) ── */
+@theme {
+  --color-canvas: #f6f5f4;
+  --color-canvassoft: #fbfbfa;
+  --color-surface: #ffffff;
+  --color-ink: #1a1a1a;
+  --color-ink2: #31302e;
+  --color-muted: #615d59;
+  --color-faint: #a39e98;
+  --color-hairline: #e6e6e6;
+  --color-hair2: #f0efee;
+  --color-primary: #0075de;
+  --color-primary2: #005bab;
+  --color-tint: #eaf3fc;
+  --color-tintborder: #d7e7f7;
+  --color-indigo: #213183;
+  --color-pass: #1aae39;
+  --color-reject: #dd5b00;
+  --color-srcai: #7b3ff2;
+  --color-srccg: #2a9d99;
+  --color-srcgp: #0075de;
+  --color-srced: #615d59;
+
+  --font-sans: var(--font-inter), "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html, body { height: 100%; }
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
+
+/* skeleton shimmer + spinner for the generating state */
+@keyframes gx-shimmer { 0% { background-position: 100% 0 } 100% { background-position: -100% 0 } }
+.gx-shimmer {
+  background: linear-gradient(110deg, #eceae8 30%, #f4f3f2 50%, #eceae8 70%);
+  background-size: 300% 100%;
+  animation: gx-shimmer 1.4s infinite;
+}
+@keyframes gx-spin { to { transform: rotate(360deg) } }
+.gx-spin { animation: gx-spin 0.8s linear infinite; }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #d8d6d3; border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: #c4c1bd; background-clip: padding-box; }
