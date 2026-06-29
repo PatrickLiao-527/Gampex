@@ -11,10 +11,12 @@
   --color-faint: #a39e98;
   --color-hairline: #e6e6e6;
   --color-hair2: #f0efee;
-  --color-primary: #0075de;
-  --color-primary2: #005bab;
-  --color-tint: #eaf3fc;
-  --color-tintborder: #d7e7f7;
+  /* Notion-style monochrome accent: near-black "primary", warm-gray selection.
+     Color is reserved for the few meaningful places (element categories, success/danger). */
+  --color-primary: #37352f;
+  --color-primary2: #1a1a1a;
+  --color-tint: #ecebe8;
+  --color-tintborder: #e0ded9;
   --color-indigo: #213183;
   --color-pass: #1aae39;
   --color-reject: #dd5b00;
@@ -22,6 +24,9 @@
   --color-srccg: #2a9d99;
   --color-srcgp: #0075de;
   --color-srced: #615d59;
+  --color-srcvo: #d97706;
+  --color-modified: #d97706;
+  --color-modbg: #fffbeb;
 
   --font-sans: var(--font-inter), "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 }
