@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { X } from "@phosphor-icons/react/dist/csr/X";
 import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 import { DotsSixVertical } from "@phosphor-icons/react/dist/csr/DotsSixVertical";
 import { UploadSimple } from "@phosphor-icons/react/dist/csr/UploadSimple";
@@ -153,18 +154,19 @@ function OutputRow({ gen, selected, onSelect }: { gen?: GenItem[]; selected: boo
 
 // ── RIGHT INSPECTOR — edits whatever is selected ───────────────────────────
 export function Inspector({ selection, shot, shots, bgm, voStyle, subtitle, items,
-  onSetModel, onSetPrompt, onSetParam,
+  onSetModel, onSetPrompt, onSetParam, onSetAsset,
   selectedVarId, onGenerateVariation, onSelectVariation, onPreviewVariation,
   onSetBgm, onSetVoStyle, onSetShotVoLine, onSetSubtitle, onPlayResult, onGoDeploy, onDelete, canDelete }: {
   selection: ShotSelection; shot?: Shot; shots: Shot[]; items?: GenItem[];
   bgm?: AudioGlobal; voStyle?: AudioGlobal; subtitle: SubtitleConfig;
   onSetModel: (m: string) => void; onSetPrompt: (p: string) => void; onSetParam: (key: string, value: ParamValue) => void;
+  onSetAsset: (file: File) => void;
   selectedVarId?: string; onGenerateVariation: () => void; onSelectVariation: (varId: string) => void; onPreviewVariation: (v: ShotVariation) => void;
   onSetBgm: (a: AudioGlobal) => void; onSetVoStyle: (a: AudioGlobal) => void; onSetShotVoLine: (no: number, v: string) => void;
   onSetSubtitle: (s: SubtitleConfig) => void; onPlayResult: (item: GenItem) => void; onGoDeploy: () => void; onDelete: () => void; canDelete: boolean;
 }) {
   if (selection.kind === "shot" && shot) {
-    return <ShotInspector s={shot} canDelete={canDelete} selectedVarId={selectedVarId} onGenerateVariation={onGenerateVariation} onSelectVariation={onSelectVariation} onPreviewVariation={onPreviewVariation} onSetModel={onSetModel} onSetPrompt={onSetPrompt} onSetParam={onSetParam} onDelete={onDelete} />;
+    return <ShotInspector s={shot} canDelete={canDelete} selectedVarId={selectedVarId} onGenerateVariation={onGenerateVariation} onSelectVariation={onSelectVariation} onPreviewVariation={onPreviewVariation} onSetModel={onSetModel} onSetPrompt={onSetPrompt} onSetParam={onSetParam} onSetAsset={onSetAsset} onDelete={onDelete} />;
   }
   if (selection.kind === "track" && selection.id === "bgm") return <BgmInspector bgm={bgm} onSetBgm={onSetBgm} />;
   if (selection.kind === "track" && selection.id === "vo") return <VoInspector voStyle={voStyle} shots={shots} subtitle={subtitle} onSetVoStyle={onSetVoStyle} onSetShotVoLine={onSetShotVoLine} onSetSubtitle={onSetSubtitle} />;
@@ -224,9 +226,9 @@ function ResultsInspector({ items, canAssemble, onPlay, onGoDeploy }: { items: G
   );
 }
 
-function ShotInspector({ s, canDelete, selectedVarId, onGenerateVariation, onSelectVariation, onPreviewVariation, onSetModel, onSetPrompt, onSetParam, onDelete }: {
+function ShotInspector({ s, canDelete, selectedVarId, onGenerateVariation, onSelectVariation, onPreviewVariation, onSetModel, onSetPrompt, onSetParam, onSetAsset, onDelete }: {
   s: Shot; canDelete: boolean; selectedVarId?: string; onGenerateVariation: () => void; onSelectVariation: (varId: string) => void; onPreviewVariation: (v: ShotVariation) => void;
-  onSetModel: (m: string) => void; onSetPrompt: (p: string) => void; onSetParam: (key: string, value: ParamValue) => void; onDelete: () => void;
+  onSetModel: (m: string) => void; onSetPrompt: (p: string) => void; onSetParam: (key: string, value: ParamValue) => void; onSetAsset: (file: File) => void; onDelete: () => void;
 }) {
   const elem = ELEM[s.type];
   const vars = s.variations ?? [];
@@ -251,7 +253,7 @@ function ShotInspector({ s, canDelete, selectedVarId, onGenerateVariation, onSel
             </button>
           )}
         </div>
-        <ShotCard s={s} onSetModel={onSetModel} onSetPrompt={onSetPrompt} onSetParam={onSetParam} />
+        <ShotCard s={s} onSetModel={onSetModel} onSetPrompt={onSetPrompt} onSetParam={onSetParam} onSetAsset={onSetAsset} />
       </div>
 
       {/* Candidates — grow / scroll BELOW the editor, so they never push 提示词 down */}
@@ -308,30 +310,50 @@ function CandidateTile({ v, selected, onSelect, onPlay }: { v: ShotVariation; se
 }
 
 // Adaptive 画面输入 —— 首帧 / 尾帧 / 参考图 / 关键帧 slots, per the selected model's real inputs (MODEL_INPUTS).
-function ImgSlot({ label, seed, on, onToggle }: { label: string; seed: string; on: boolean; onToggle: () => void }) {
+// Slots hold real local files (object URLs). ★ BACKEND: on pick, upload and keep the returned
+// URL alongside the shot's params so generation can reference it (see docs/agent-contract.md).
+function ImgSlot({ label, url, onPick, onClear }: { label: string; url?: string; onPick: () => void; onClear: () => void }) {
   return (
-    <button type="button" onClick={onToggle}
-      className={`relative w-[40px] aspect-[9/16] rounded-md overflow-hidden grid place-items-center transition-colors ${on ? "ring-[1.5px] ring-primary" : "border border-dashed border-hairline hover:border-ink2 hover:bg-canvas bg-surface"}`}>
-      {on ? (
-        <>
-          <img src={img(seed, 72, 128)} alt="" className="absolute inset-0 w-full h-full object-cover" />
-          <span className="absolute inset-x-0 bottom-0 text-[7.5px] leading-[1.5] text-center text-white bg-black/55">{label}</span>
-        </>
-      ) : (
-        <span className="flex flex-col items-center gap-0.5 text-faint">
-          <Plus size={11} weight="bold" />
-          <span className="text-[8px] font-medium leading-none">{label}</span>
-        </span>
+    <span className="relative inline-flex group/slot">
+      <button type="button" onClick={onPick}
+        className={`relative w-[40px] aspect-[9/16] rounded-md overflow-hidden grid place-items-center transition-colors ${url ? "ring-[1.5px] ring-primary" : "border border-dashed border-hairline hover:border-ink2 hover:bg-canvas bg-surface"}`}>
+        {url ? (
+          <>
+            <img src={url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+            <span className="absolute inset-x-0 bottom-0 text-[7.5px] leading-[1.5] text-center text-white bg-black/55">{label}</span>
+          </>
+        ) : (
+          <span className="flex flex-col items-center gap-0.5 text-faint">
+            <Plus size={11} weight="bold" />
+            <span className="text-[8px] font-medium leading-none">{label}</span>
+          </span>
+        )}
+      </button>
+      {url && (
+        <button type="button" onClick={(e) => { e.stopPropagation(); onClear(); }} aria-label={`移除${label}`}
+          className="absolute -top-1 -right-1 w-[14px] h-[14px] rounded-full bg-ink text-white grid place-items-center opacity-0 group-hover/slot:opacity-100 transition-opacity shadow-[0_1px_3px_rgba(0,0,0,0.3)]">
+          <X size={8} weight="bold" />
+        </button>
       )}
-    </button>
+    </span>
   );
 }
 
 function ImageInputs({ model }: { model: string }) {
   const caps = MODEL_INPUTS[model];
-  const [filled, setFilled] = useState<Record<string, boolean>>({});
+  // slotKey → local object URL of the picked image
+  const [filled, setFilled] = useState<Record<string, string>>({});
+  const fileInput = useRef<HTMLInputElement>(null);
+  const activeSlot = useRef<string | null>(null);
   if (!caps) return null;
-  const toggle = (k: string) => setFilled((f) => ({ ...f, [k]: !f[k] }));
+  const pick = (k: string) => { activeSlot.current = k; fileInput.current?.click(); };
+  const clear = (k: string) => setFilled((f) => { const n = { ...f }; delete n[k]; return n; });
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    const k = activeSlot.current;
+    if (f && k) setFilled((m) => ({ ...m, [k]: URL.createObjectURL(f) }));
+  };
   const refShown = Math.min(caps.refs, 3);
   const hint = `留空 = 文生视频 · 首帧 = 图生 · 首帧+尾帧 = 两端插值${caps.note ? `。${caps.note}` : ""}`;
   return (
@@ -341,29 +363,36 @@ function ImageInputs({ model }: { model: string }) {
         <Tooltip label={hint}><span className="text-faint hover:text-muted transition-colors inline-flex"><Info size={12} /></span></Tooltip>
       </div>
       <div className="flex flex-wrap items-start gap-1.5">
-        {caps.start && <ImgSlot label="首帧" seed={`sf-${model}`} on={!!filled.start} onToggle={() => toggle("start")} />}
-        {caps.end && <ImgSlot label="尾帧" seed={`ef-${model}`} on={!!filled.end} onToggle={() => toggle("end")} />}
+        {caps.start && <ImgSlot label="首帧" url={filled.start} onPick={() => pick("start")} onClear={() => clear("start")} />}
+        {caps.end && <ImgSlot label="尾帧" url={filled.end} onPick={() => pick("end")} onClear={() => clear("end")} />}
         {caps.keyframes > 0 && Array.from({ length: caps.keyframes }).map((_, i) => (
-          <ImgSlot key={`kf${i}`} label={`帧${i + 1}`} seed={`kf-${model}-${i}`} on={!!filled[`kf${i}`]} onToggle={() => toggle(`kf${i}`)} />
+          <ImgSlot key={`kf${i}`} label={`帧${i + 1}`} url={filled[`kf${i}`]} onPick={() => pick(`kf${i}`)} onClear={() => clear(`kf${i}`)} />
         ))}
         {refShown > 0 && (
           <span className="flex items-center gap-1.5 pl-2 ml-0.5 border-l border-hairline">
             {Array.from({ length: refShown }).map((_, i) => (
-              <ImgSlot key={`ref${i}`} label="参考" seed={`rf-${model}-${i}`} on={!!filled[`ref${i}`]} onToggle={() => toggle(`ref${i}`)} />
+              <ImgSlot key={`ref${i}`} label="参考" url={filled[`ref${i}`]} onPick={() => pick(`ref${i}`)} onClear={() => clear(`ref${i}`)} />
             ))}
             {caps.refs > refShown && <span className="text-[10px] text-faint font-medium tabular-nums self-center">+{caps.refs - refShown} 参考</span>}
           </span>
         )}
       </div>
+      <input ref={fileInput} type="file" accept="image/*" hidden onChange={onFile} />
     </div>
   );
 }
 
-function ShotCard({ s, onSetModel, onSetPrompt, onSetParam }: {
-  s: Shot; onSetModel: (m: string) => void; onSetPrompt: (p: string) => void; onSetParam: (key: string, value: ParamValue) => void;
+function ShotCard({ s, onSetModel, onSetPrompt, onSetParam, onSetAsset }: {
+  s: Shot; onSetModel: (m: string) => void; onSetPrompt: (p: string) => void; onSetParam: (key: string, value: ParamValue) => void; onSetAsset: (file: File) => void;
 }) {
   const elem = ELEM[s.type];
   const isAI = s.source === "ai";
+  const assetInput = useRef<HTMLInputElement>(null);
+  const onAssetFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (f) onSetAsset(f);
+  };
   return (
     <div className="w-full self-start">
       {isAI ? (
@@ -384,18 +413,23 @@ function ShotCard({ s, onSetModel, onSetPrompt, onSetParam }: {
           {s.asset ? (
             <div className="flex items-center gap-2 rounded-md border border-hairline p-1.5">
               <span className="relative w-8 h-8 rounded overflow-hidden bg-black shrink-0">
-                <img src={img(s.seed ?? s.asset, 80, 80)} alt="" className="w-full h-full object-cover opacity-90" />
+                {s.assetUrl
+                  ? (s.assetKind === "video"
+                    ? <video src={s.assetUrl} muted playsInline preload="metadata" className="w-full h-full object-cover opacity-90" />
+                    : <img src={s.assetUrl} alt="" className="w-full h-full object-cover opacity-90" />)
+                  : <img src={img(s.seed ?? s.asset, 80, 80)} alt="" className="w-full h-full object-cover opacity-90" />}
                 <span className="absolute inset-0 grid place-items-center text-white"><Play size={9} weight="fill" className="ml-0.5 drop-shadow" /></span>
               </span>
               <span className="text-[11.5px] text-ink2 font-medium truncate flex-1">{s.asset}</span>
-              <button className="text-[11px] text-primary font-medium shrink-0 hover:underline">替换</button>
+              <button onClick={() => assetInput.current?.click()} className="text-[11px] text-primary font-medium shrink-0 hover:underline">替换</button>
             </div>
           ) : (
-            <button className="w-full flex flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[#e3c08a] bg-modbg py-3 text-modified hover:border-modified transition-colors">
+            <button onClick={() => assetInput.current?.click()} className="w-full flex flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[#e3c08a] bg-modbg py-3 text-modified hover:border-modified transition-colors">
               <UploadSimple size={15} weight="bold" />
               <span className="text-[11px] font-semibold">上传{elem.label}</span>
             </button>
           )}
+          <input ref={assetInput} type="file" accept={s.type === "static" ? "image/*" : "video/*,image/*"} hidden onChange={onAssetFile} />
           {s.reasoning && <div className="mt-3 text-[11px] text-faint leading-relaxed">✦ {s.reasoning}</div>}
         </div>
       )}

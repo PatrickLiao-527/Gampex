@@ -6,6 +6,7 @@ import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
 import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { motion, AnimatePresence } from "motion/react";
 import { MODEL_OPTIONS, defaultParams, initialConcepts, initialMessages, type Concept, type Shot, type ShotVariation, type Video, type ChatMsg, type ChatAttachment, type ParamValue, type AudioGlobal } from "@/lib/data";
+import { runMockAgentTurn, type AgentTurnEvent } from "@/lib/agent";
 import DeployPlanView from "../deploy-plan";
 import { type Tab, type GenItem, type Project, initialProjects, durOf, reflowShots } from "./types";
 import { SectionLabel, ReopenPill, PillBtn, NewProjectModal } from "./ui";
@@ -141,11 +142,33 @@ export default function Workspace() {
   function addShot(cn: number) {
     mutateShots(cn, (shots) => [...shots, { id: `s-new-${shotSeq.current++}`, no: 999, t: "0–3s", type: "ai-video", source: "ai", d: "新镜头", model: MODEL_OPTIONS["ai-video"][0], prompt: "", reasoning: "" }]);
   }
+  // ── Agent turn ─────────────────────────────────────────────────────────────
+  // Events (lib/agent.ts) are applied to the LAST agent message. The mock driver
+  // and the real backend stream speak the same protocol — to go live, replace
+  // runMockAgentTurn with a driver that maps SSE/WebSocket events onto
+  // AgentTurnEvent and this function stays untouched. See docs/agent-contract.md.
+  const cancelTurn = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelTurn.current?.(), []);
+  function applyAgentEvent(ev: AgentTurnEvent) {
+    setMessages((m) => {
+      const i = m.length - 1;
+      const msg = m[i];
+      if (!msg || msg.role !== "a") return m;
+      const next = [...m];
+      if (ev.type === "step_start") next[i] = { ...msg, steps: [...(msg.steps ?? []), ev.step] };
+      else if (ev.type === "step_update") next[i] = { ...msg, steps: (msg.steps ?? []).map((s) => (s.id === ev.id ? { ...s, ...ev.patch } : s)) };
+      else if (ev.type === "text_delta") next[i] = { ...msg, text: msg.text + ev.delta };
+      else if (ev.type === "turn_done") next[i] = { ...msg, streaming: false };
+      else if (ev.type === "turn_error") next[i] = { ...msg, streaming: false, text: msg.text || `出错了：${ev.message}` };
+      return next;
+    });
+  }
   function send(text: string, attachments?: ChatAttachment[]) {
     const t = text.trim();
     if (!t && !(attachments && attachments.length)) return;
-    setMessages((m) => [...m, { role: "u", text: t, attachments }]);
-    window.setTimeout(() => setMessages((m) => [...m, { role: "a", text: "收到，我调整一下方案 →" }]), 600);
+    cancelTurn.current?.();
+    setMessages((m) => [...m, { role: "u", text: t, attachments }, { role: "a", text: "", steps: [], streaming: true }]);
+    cancelTurn.current = runMockAgentTurn(t, applyAgentEvent);
   }
   function createProject(name: string, desc: string) {
     const id = "p" + (projects.length + 1) + Math.floor(performance.now() % 1000);
@@ -165,6 +188,27 @@ export default function Workspace() {
       const base = s.params ?? defaultParams(s.model ?? "");
       return { ...s, params: { ...base, [key]: value } };
     }) } : c)));
+  }
+  // ── Uploads ────────────────────────────────────────────────────────────────
+  // Prototype: object URLs (session-local). ★ BACKEND: POST the file to the media
+  // endpoint and store the returned URL instead — the shape stays the same.
+  function setShotAsset(cn: number, no: number, file: File) {
+    patchShot(cn, no, { asset: file.name, assetUrl: URL.createObjectURL(file), assetKind: file.type.startsWith("video") ? "video" : "image", seed: undefined });
+    showToast(`已上传「${file.name}」`);
+  }
+  function addConceptRef(file: File) {
+    const kind = file.type.startsWith("video") ? "video" as const : "image" as const;
+    const ref = { seed: `up-${Date.now()}`, label: file.name, source: "你上传", url: URL.createObjectURL(file), kind };
+    setConceptData((prev) => prev.map((c) => (c.n === selectedConceptN ? { ...c, refs: [...c.refs, ref] } : c)));
+    showToast(`已添加参考「${file.name}」`);
+  }
+  function replaceConceptRef(video: Video, file: File) {
+    if (!video.refMeta) return;
+    const { cn, seed } = video.refMeta;
+    const kind = file.type.startsWith("video") ? "video" as const : "image" as const;
+    setConceptData((prev) => prev.map((c) => (c.n === cn ? { ...c, refs: c.refs.map((r) => (r.seed === seed ? { ...r, label: file.name, source: "你上传", url: URL.createObjectURL(file), kind } : r)) } : c)));
+    setPreview(null);
+    showToast(`参考已替换为「${file.name}」`);
   }
   function setShotSfx(cn: number, no: number, v: string) { patchShot(cn, no, { sfx: v }); }
   function setShotVoLine(cn: number, no: number, v: string) { patchShot(cn, no, { voLine: v }); }
@@ -243,7 +287,8 @@ export default function Workspace() {
         planOpen={planOpen} onStartPlan={() => setPlanOpen(true)} onExitPlan={() => setPlanOpen(false)}
         onPreview={setPreview}
         onSetShotModel={setShotModel} onSetShotPrompt={setShotPrompt} onSetShotParam={setShotParam}
-        onSetShotSfx={setShotSfx} onSetShotVoLine={setShotVoLine}
+        onSetShotSfx={setShotSfx} onSetShotVoLine={setShotVoLine} onSetShotAsset={setShotAsset}
+        onAddRef={addConceptRef}
         onSetBgm={setConceptBgm} onSetVoStyle={setConceptVoStyle}
         selectedVariations={selectedVariations}
         onGenerateVariation={generateShotVariation} onBulkGenerate={bulkGenerateVariations}
@@ -268,7 +313,7 @@ export default function Workspace() {
         </motion.div>
       )}
 
-      <PreviewModal video={preview} onClose={() => setPreview(null)} />
+      <PreviewModal video={preview} onClose={() => setPreview(null)} onReplaceRef={replaceConceptRef} />
       <NewProjectModal open={showNew} onClose={() => setShowNew(false)} onCreate={createProject} />
 
       <AnimatePresence>
@@ -295,13 +340,14 @@ function ProjectView(props: {
   planOpen: boolean; onStartPlan: () => void; onExitPlan: () => void;
   onSetShotModel: (cn: number, no: number, m: string) => void; onSetShotPrompt: (cn: number, no: number, p: string) => void; onSetShotParam: (cn: number, no: number, key: string, value: ParamValue) => void;
   onSetShotSfx: (cn: number, no: number, v: string) => void; onSetShotVoLine: (cn: number, no: number, v: string) => void;
+  onSetShotAsset: (cn: number, no: number, file: File) => void; onAddRef: (file: File) => void;
   onSetBgm: (cn: number, a: AudioGlobal) => void; onSetVoStyle: (cn: number, a: AudioGlobal) => void;
   selectedVariations: Record<string, string>;
   onGenerateVariation: (cn: number, no: number) => void; onBulkGenerate: (cn: number) => void;
   onSelectVariation: (cn: number, no: number, varId: string) => void;
   onPreviewVariation: (shot: Shot, v: ShotVariation) => void;
 }) {
-  const { project, tab, onTab, chatOpen, onReopenChat, conceptData, dismissed, genByConcept, selectedConceptN, onSelectConcept, onGenerateConcept, onDismissConcept, onRestoreConcept, onRestoreDismissed, onAddConcept, onReorderShots, onDeleteShot, onAddShot, videos, librarySel, onToggleLib, planOpen, onStartPlan, onExitPlan, onPreview, onSetShotModel, onSetShotPrompt, onSetShotParam, onSetShotSfx, onSetShotVoLine, onSetBgm, onSetVoStyle, selectedVariations, onGenerateVariation, onBulkGenerate, onSelectVariation, onPreviewVariation } = props;
+  const { project, tab, onTab, chatOpen, onReopenChat, conceptData, dismissed, genByConcept, selectedConceptN, onSelectConcept, onGenerateConcept, onDismissConcept, onRestoreConcept, onRestoreDismissed, onAddConcept, onReorderShots, onDeleteShot, onAddShot, videos, librarySel, onToggleLib, planOpen, onStartPlan, onExitPlan, onPreview, onSetShotModel, onSetShotPrompt, onSetShotParam, onSetShotSfx, onSetShotVoLine, onSetShotAsset, onAddRef, onSetBgm, onSetVoStyle, selectedVariations, onGenerateVariation, onBulkGenerate, onSelectVariation, onPreviewVariation } = props;
   const planMode = tab === "deploy" && planOpen;
   const [filter, setFilter] = useState("全部");
   const channels = ["全部", ...Array.from(new Set(videos.map((v) => v.channel)))];
@@ -335,14 +381,14 @@ function ProjectView(props: {
         <DeployPlanView creativeIds={Array.from(librarySel)} onExit={onExitPlan} />
       ) : tab === "create" ? (
         <div className="flex-1 min-h-0 flex flex-col px-4 pt-3 pb-3">
-          <ConceptTabs concepts={visibleConcepts} selectedN={selectedConcept?.n ?? -1} onSelect={onSelectConcept} onDismiss={onDismissConcept} onPreview={onPreview} gen={genByConcept} dismissedConcepts={dismissedConcepts} onRestoreConcept={onRestoreConcept} onRestoreAll={onRestoreDismissed} onAddConcept={onAddConcept} />
+          <ConceptTabs concepts={visibleConcepts} selectedN={selectedConcept?.n ?? -1} onSelect={onSelectConcept} onDismiss={onDismissConcept} onPreview={onPreview} gen={genByConcept} dismissedConcepts={dismissedConcepts} onRestoreConcept={onRestoreConcept} onRestoreAll={onRestoreDismissed} onAddConcept={onAddConcept} onAddRef={onAddRef} />
           {selectedConcept ? (
             <div className="flex-1 min-h-0">
               <ConceptCard key={selectedConcept.n} c={selectedConcept} gen={genByConcept[selectedConcept.n]} onGenerate={(count) => onGenerateConcept(selectedConcept.n, count)} onPreview={onPreview}
                 onViewLibrary={() => onTab("deploy")}
                 onReorderShots={onReorderShots} onDeleteShot={onDeleteShot} onAddShot={onAddShot}
                 onSetShotModel={onSetShotModel} onSetShotPrompt={onSetShotPrompt} onSetShotParam={onSetShotParam}
-                onSetShotSfx={onSetShotSfx} onSetShotVoLine={onSetShotVoLine}
+                onSetShotSfx={onSetShotSfx} onSetShotVoLine={onSetShotVoLine} onSetShotAsset={onSetShotAsset}
                 onSetBgm={onSetBgm} onSetVoStyle={onSetVoStyle}
                 selectedVariations={selectedVariations}
                 onGenerateVariation={onGenerateVariation} onBulkGenerate={onBulkGenerate}

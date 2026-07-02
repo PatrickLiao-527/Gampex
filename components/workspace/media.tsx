@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { Check } from "@phosphor-icons/react/dist/csr/Check";
 import { X } from "@phosphor-icons/react/dist/csr/X";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
@@ -31,7 +32,8 @@ export function VideoTile({ v, onClick, selectable, selected, member, onToggleMe
   );
 }
 
-export function PreviewModal({ video, onClose }: { video: Video | null; onClose: () => void }) {
+export function PreviewModal({ video, onClose, onReplaceRef }: { video: Video | null; onClose: () => void; onReplaceRef?: (video: Video, file: File) => void }) {
+  const replaceInput = useRef<HTMLInputElement>(null);
   return (
     <AnimatePresence>
       {video && (
@@ -42,8 +44,12 @@ export function PreviewModal({ video, onClose }: { video: Video | null; onClose:
             <motion.div initial={{ scale: 0.92, y: 8, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} transition={{ type: "spring", stiffness: 320, damping: 28 }}
               className="relative bg-surface rounded-2xl border border-hairline shadow-[0_24px_70px_rgba(0,0,0,0.25)] flex overflow-hidden w-[600px] max-w-[92vw] max-h-[86vh]">
               <div className="w-[268px] shrink-0 bg-black relative">
-                <img src={img(video.seed, 360, 640)} alt="" className="w-full h-full object-cover" />
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[54px] h-[54px] rounded-full bg-white/[0.18] border border-white/45 backdrop-blur grid place-items-center text-white"><Play size={19} weight="fill" className="ml-0.5" /></div>
+                {video.url
+                  ? (video.kind === "video"
+                    ? <video src={video.url} muted playsInline autoPlay loop className="w-full h-full object-cover" />
+                    : <img src={video.url} alt="" className="w-full h-full object-cover" />)
+                  : <img src={img(video.seed, 360, 640)} alt="" className="w-full h-full object-cover" />}
+                {video.kind !== "video" && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[54px] h-[54px] rounded-full bg-white/[0.18] border border-white/45 backdrop-blur grid place-items-center text-white"><Play size={19} weight="fill" className="ml-0.5" /></div>}
               </div>
               <div className="flex-1 min-w-0 flex flex-col">
                 <header className="px-4 py-3 border-b border-hairline flex items-center gap-2">
@@ -58,7 +64,13 @@ export function PreviewModal({ video, onClose }: { video: Video | null; onClose:
                   )}
                 </div>
                 <div className="px-4 py-3 border-t border-hairline flex gap-2">
-                  <button className="flex-1 text-[13px] font-semibold rounded-full py-2.5 border bg-surface text-ink border-hairline hover:bg-canvas">替换参考</button>
+                  {video.refMeta && onReplaceRef && (
+                    <>
+                      <button onClick={() => replaceInput.current?.click()} className="flex-1 text-[13px] font-semibold rounded-full py-2.5 border bg-surface text-ink border-hairline hover:bg-canvas">替换参考</button>
+                      <input ref={replaceInput} type="file" accept="video/*,image/*" hidden
+                        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onReplaceRef(video, f); }} />
+                    </>
+                  )}
                   <button onClick={onClose} className="flex-1 text-[13px] font-semibold rounded-full py-2.5 border bg-primary text-white border-primary hover:bg-primary2">知道了</button>
                 </div>
               </div>
