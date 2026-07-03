@@ -9,13 +9,14 @@ import { Archive } from "@phosphor-icons/react/dist/csr/Archive";
 import { Tooltip, ConfirmModal, CountStepper } from "./ui";
 import { ShotBoard, Inspector } from "./shot-board";
 import { type GenItem, type ShotSelection } from "./types";
-import { img, type Concept, type Shot, type ShotVariation, type Video, type ParamValue, type AudioGlobal, type SubtitleConfig } from "@/lib/data";
+import { img, type Concept, type ConceptRef, type Shot, type ShotVariation, type Video, type ParamValue, type AudioGlobal, type SubtitleConfig } from "@/lib/data";
 
-export function ConceptCard({ c, gen, onGenerate, onPreview, onViewLibrary, onReorderShots, onDeleteShot, onAddShot, onSetShotModel, onSetShotPrompt, onSetShotParam, onSetShotVoLine, onSetBgm, onSetVoStyle, selectedVariations, onGenerateVariation, onBulkGenerate, onSelectVariation, onPreviewVariation }: {
+export function ConceptCard({ c, gen, onGenerate, onPreview, onViewLibrary, onReorderShots, onDeleteShot, onAddShot, onSetShotModel, onSetShotPrompt, onSetShotParam, onSetShotVoLine, onSetShotAsset, onSetBgm, onSetVoStyle, selectedVariations, onGenerateVariation, onBulkGenerate, onSelectVariation, onPreviewVariation }: {
   c: Concept; gen?: GenItem[]; onGenerate: (count: number) => void; onPreview: (v: Video) => void; onViewLibrary: () => void;
   onReorderShots: (cn: number, orderedIds: string[]) => void; onDeleteShot: (cn: number, no: number) => void; onAddShot: (cn: number) => void;
   onSetShotModel: (cn: number, no: number, m: string) => void; onSetShotPrompt: (cn: number, no: number, p: string) => void; onSetShotParam: (cn: number, no: number, key: string, value: ParamValue) => void;
   onSetShotSfx?: (cn: number, no: number, v: string) => void; onSetShotVoLine: (cn: number, no: number, v: string) => void;
+  onSetShotAsset: (cn: number, no: number, file: File) => void;
   onSetBgm: (cn: number, a: AudioGlobal) => void; onSetVoStyle: (cn: number, a: AudioGlobal) => void;
   selectedVariations: Record<string, string>;
   onGenerateVariation: (cn: number, no: number) => void; onBulkGenerate: (cn: number) => void;
@@ -90,6 +91,7 @@ export function ConceptCard({ c, gen, onGenerate, onPreview, onViewLibrary, onRe
             onSetModel={(m) => selShot && onSetShotModel(c.n, selShot.no, m)}
             onSetPrompt={(p) => selShot && onSetShotPrompt(c.n, selShot.no, p)}
             onSetParam={(k, v) => selShot && onSetShotParam(c.n, selShot.no, k, v)}
+            onSetAsset={(file) => selShot && onSetShotAsset(c.n, selShot.no, file)}
             onGenerateVariation={() => selShot && onGenerateVariation(c.n, selShot.no)}
             onSelectVariation={(varId) => selShot && onSelectVariation(c.n, selShot.no, varId)}
             onPreviewVariation={(v) => selShot && onPreviewVariation(selShot, v)}
@@ -115,19 +117,21 @@ export function ConceptCard({ c, gen, onGenerate, onPreview, onViewLibrary, onRe
   );
 }
 
-export function ConceptTabs({ concepts, selectedN, onSelect, onDismiss, onPreview, gen, dismissedConcepts, onRestoreConcept, onRestoreAll, onAddConcept }: {
+export function ConceptTabs({ concepts, selectedN, onSelect, onDismiss, onPreview, gen, dismissedConcepts, onRestoreConcept, onRestoreAll, onAddConcept, onAddRef }: {
   concepts: Concept[]; selectedN: number; onSelect: (n: number) => void; onDismiss: (n: number) => void; onPreview: (v: Video) => void;
   gen: Record<number, GenItem[]>; dismissedConcepts: Concept[]; onRestoreConcept: (n: number) => void; onRestoreAll: () => void; onAddConcept: () => void;
+  onAddRef: (file: File) => void;
 }) {
   const selected = concepts.find((c) => c.n === selectedN) ?? concepts[0];
   // With many chips the strip scrolls horizontally; keep the active chip in view
   // (e.g. after adding a concept, whose chip is appended off the right edge).
   const activeChipRef = useRef<HTMLDivElement>(null);
+  const refInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     activeChipRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selectedN]);
-  const openRef = (c: Concept, r: { seed: string; label: string; source: string }) =>
-    onPreview({ id: `ref-${c.n}-${r.seed}`, label: r.label, channel: c.platform, dur: c.duration, ratio: c.aspectRatio, seed: r.seed, state: "pending", isRef: true, refSource: r.source });
+  const openRef = (c: Concept, r: ConceptRef) =>
+    onPreview({ id: `ref-${c.n}-${r.seed}`, label: r.label, channel: c.platform, dur: c.duration, ratio: c.aspectRatio, seed: r.seed, state: "pending", isRef: true, refSource: r.source, url: r.url, kind: r.kind, refMeta: { cn: c.n, seed: r.seed } });
   return (
     <div className="flex items-center gap-2 mb-3 shrink-0">
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 min-w-0">
@@ -170,14 +174,19 @@ export function ConceptTabs({ concepts, selectedN, onSelect, onDismiss, onPrevie
             <Tooltip key={r.seed} label={`${r.label} · ${r.source}`}>
               <button onClick={() => openRef(selected, r)}
                 className="relative w-8 h-8 rounded-md overflow-hidden bg-black ring-1 ring-hairline hover:ring-2 hover:ring-ink2 transition-all">
-                <img src={img(r.seed, 80, 80)} alt="" className="w-full h-full object-cover opacity-90" />
+                {r.url
+                  ? (r.kind === "video"
+                    ? <video src={r.url} muted playsInline preload="metadata" className="w-full h-full object-cover opacity-90" />
+                    : <img src={r.url} alt="" className="w-full h-full object-cover opacity-90" />)
+                  : <img src={img(r.seed, 80, 80)} alt="" className="w-full h-full object-cover opacity-90" />}
                 <span className="absolute inset-0 grid place-items-center text-white opacity-90"><Play size={9} weight="fill" className="ml-0.5 drop-shadow" /></span>
               </button>
             </Tooltip>
           ))}
           <Tooltip label="添加参考片">
-            <button className="w-8 h-8 rounded-md border border-dashed border-hairline grid place-items-center text-faint hover:border-[#cdd6e0] hover:text-ink2 transition-colors"><Plus size={12} /></button>
+            <button onClick={() => refInput.current?.click()} className="w-8 h-8 rounded-md border border-dashed border-hairline grid place-items-center text-faint hover:border-[#cdd6e0] hover:text-ink2 transition-colors"><Plus size={12} /></button>
           </Tooltip>
+          <input ref={refInput} type="file" accept="video/*,image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onAddRef(f); }} />
         </div>
       )}
       <DismissedArchive concepts={dismissedConcepts} onRestore={onRestoreConcept} onRestoreAll={onRestoreAll} />

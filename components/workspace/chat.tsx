@@ -8,17 +8,22 @@ import { VideoCamera } from "@phosphor-icons/react/dist/csr/VideoCamera";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
 import { X } from "@phosphor-icons/react/dist/csr/X";
 import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
+import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 import { SealCheck } from "@phosphor-icons/react/dist/csr/SealCheck";
+import { CircleNotch } from "@phosphor-icons/react/dist/csr/CircleNotch";
 import { Tooltip } from "./ui";
 import { type Project } from "./types";
-import { img, type ChatMsg, type ChatAttachment, type ChatPick } from "@/lib/data";
+import { img, type ChatMsg, type ChatAttachment } from "@/lib/data";
+import { type AgentStep } from "@/lib/agent";
 
 let attSeq = 0;
 function filesToAttachments(files: FileList | null, kind: "image" | "video"): ChatAttachment[] {
   if (!files) return [];
+  // Object URLs for both kinds so video chips get a real first-frame thumbnail.
+  // ★ BACKEND: swap for your upload endpoint's URL once media persistence exists.
   return Array.from(files).map((f) => ({
-    id: `att-${attSeq++}-${f.name}`, name: f.name, kind, url: kind === "image" ? URL.createObjectURL(f) : undefined,
+    id: `att-${attSeq++}-${f.name}`, name: f.name, kind, url: URL.createObjectURL(f),
   }));
 }
 
@@ -38,14 +43,17 @@ export function Chat({ project, messages, onClose, onSend, badge, placeholder, s
   const threadRef = useRef<HTMLDivElement>(null);
   const imgInput = useRef<HTMLInputElement>(null);
   const vidInput = useRef<HTMLInputElement>(null);
-  useEffect(() => { threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" }); }, [messages.length]);
+  const last = messages[messages.length - 1];
+  const busy = !!(last?.role === "a" && last.streaming);
+  // Follow the stream: scroll on any message change (new msg, step update, text delta).
+  useEffect(() => { threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" }); }, [messages]);
   const addFiles = (e: React.ChangeEvent<HTMLInputElement>, kind: "image" | "video") => {
     const next = filesToAttachments(e.target.files, kind);
     e.target.value = "";
     setAttachments((a) => [...a, ...next]);
   };
   const removeAtt = (id: string) => setAttachments((a) => a.filter((x) => x.id !== id));
-  const canSend = input.trim().length > 0 || attachments.length > 0;
+  const canSend = (input.trim().length > 0 || attachments.length > 0) && !busy;
   const submit = () => { if (!canSend) return; onSend(input, attachments); setInput(""); setAttachments([]); };
   return (
     <section className="w-full h-full bg-canvassoft flex flex-col overflow-hidden">
@@ -60,7 +68,7 @@ export function Chat({ project, messages, onClose, onSend, badge, placeholder, s
       <div ref={threadRef} className="flex-1 overflow-y-auto p-[18px] flex flex-col gap-4">
         {messages.map((m, i) => m.role === "u"
           ? <UserMsg key={i} refs={m.refs} attachments={m.attachments}>{m.text}</UserMsg>
-          : <AgentMsg key={i} picks={m.picks} action={m.action} flags={m.flags} onAction={onAction}>{m.text}</AgentMsg>)}
+          : <AgentMsg key={i} m={m} onAction={onAction} />)}
         {suggestions && suggestions.length > 0 && messages[messages.length - 1]?.role === "a" && (
           <div className="flex flex-wrap gap-1.5">
             {suggestions.map((s) => (
@@ -78,13 +86,15 @@ export function Chat({ project, messages, onClose, onSend, badge, placeholder, s
           )}
           <textarea rows={1} value={input} onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
-            placeholder={placeholder ?? "继续聊，或上传参考…"} className="w-full resize-none outline-none bg-transparent text-[13.5px] leading-snug text-ink placeholder:text-faint" />
+            placeholder={busy ? "Gampex 正在处理…" : (placeholder ?? "继续聊，或上传参考…")} className="w-full resize-none outline-none bg-transparent text-[13.5px] leading-snug text-ink placeholder:text-faint" />
           <div className="flex items-center gap-1 mt-1.5">
             <Tooltip label="上传图片参考" side="top"><ComposerTool aria-label="上传图片参考" onClick={() => imgInput.current?.click()}><ImageIcon size={15} /> 图片</ComposerTool></Tooltip>
             <Tooltip label="上传视频参考" side="top"><ComposerTool aria-label="上传视频参考" onClick={() => vidInput.current?.click()}><VideoCamera size={15} /> 视频</ComposerTool></Tooltip>
             <span className="flex-1" />
-            <Tooltip label="发送 (Enter)" side="top">
-              <button onClick={submit} disabled={!canSend} aria-label="发送" className="w-[31px] h-[31px] rounded-full bg-primary text-white flex items-center justify-center hover:bg-primary2 transition-transform active:scale-90 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-primary"><ArrowUp size={15} weight="bold" /></button>
+            <Tooltip label={busy ? "等待当前回复完成" : "发送 (Enter)"} side="top">
+              <button onClick={submit} disabled={!canSend} aria-label="发送" className="w-[31px] h-[31px] rounded-full bg-primary text-white flex items-center justify-center hover:bg-primary2 transition-transform active:scale-90 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-primary">
+                {busy ? <CircleNotch size={15} weight="bold" className="gx-spin" /> : <ArrowUp size={15} weight="bold" />}
+              </button>
             </Tooltip>
           </div>
           <input ref={imgInput} type="file" accept="image/*" multiple hidden onChange={(e) => addFiles(e, "image")} />
@@ -107,6 +117,15 @@ function AttachmentChip({ a, onRemove }: { a: ChatAttachment; onRemove: () => vo
 
 function AttachmentThumb({ a }: { a: ChatAttachment }) {
   if (a.kind === "image" && a.url) return <img src={a.url} alt="" className="w-6 h-6 rounded object-cover" />;
+  if (a.kind === "video" && a.url) {
+    return (
+      <span className="relative w-6 h-6 rounded overflow-hidden bg-black shrink-0">
+        {/* preload=metadata paints the first frame — a free thumbnail for local files */}
+        <video src={a.url} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+        <span className="absolute inset-0 grid place-items-center text-white"><Play size={9} weight="fill" className="ml-0.5 drop-shadow" /></span>
+      </span>
+    );
+  }
   return <span className="w-6 h-6 rounded bg-black text-white grid place-items-center"><VideoCamera size={12} weight="fill" /></span>;
 }
 
@@ -137,14 +156,32 @@ function RefChip({ children }: { children: React.ReactNode }) {
   return <span className="flex items-center gap-1.5 text-[11.5px] text-ink2 bg-surface border border-hairline rounded-lg pl-1 pr-2 py-1">{children}</span>;
 }
 
-function AgentMsg({ children, picks, action, flags, onAction }: { children: React.ReactNode; picks?: ChatPick[]; action?: { id: string; label: string }; flags?: { tone: "warn" | "info"; text: string }[]; onAction?: (id: string) => void }) {
+/* ── Agent message — work-trace steps (Cursor-style) + streamed reply text,
+   then confirm-point flags, library picks, and a one-tap continuation action. ── */
+
+function AgentMsg({ m, onAction }: { m: ChatMsg; onAction?: (id: string) => void }) {
+  const steps = m.steps ?? [];
+  const showThinkingPlaceholder = m.streaming && steps.length === 0 && !m.text;
   return (
     <div className="flex flex-col gap-1.5">
       <div className="text-[11px] font-semibold text-faint flex items-center gap-1.5"><span className="w-[15px] h-[15px] rounded bg-primary text-white grid place-items-center text-[9px] font-bold">G</span>Gampex</div>
-      <div className="text-[13.5px] leading-relaxed text-ink2 whitespace-pre-line">{children}</div>
-      {flags && flags.length > 0 && (
+      {(steps.length > 0 || showThinkingPlaceholder) && (
+        <div className="flex flex-col gap-0.5 -ml-0.5">
+          {showThinkingPlaceholder && (
+            <div className="py-[3px] px-1 text-[12px] font-medium"><span className="gx-text-shimmer">正在思考…</span></div>
+          )}
+          {steps.map((s) => <StepRow key={s.id} s={s} />)}
+        </div>
+      )}
+      {(m.text || m.streaming) && (
+        <div className="text-[13.5px] leading-relaxed text-ink2 whitespace-pre-line">
+          {m.text}
+          {m.streaming && <span className="inline-block w-[7px] h-[15px] bg-ink2/60 rounded-[1px] align-[-2px] ml-px animate-pulse" />}
+        </div>
+      )}
+      {m.flags && m.flags.length > 0 && (
         <div className="flex flex-col gap-1.5 mt-1">
-          {flags.map((f) => (
+          {m.flags.map((f) => (
             <div key={f.text} className={`flex items-start gap-1.5 text-[12.5px] rounded-lg px-2.5 py-2 border ${f.tone === "warn" ? "bg-modbg border-[#f5e3bf] text-[#92610a]" : "bg-canvas border-hairline text-muted"}`}>
               {f.tone === "warn" ? <Warning size={14} weight="fill" className="mt-[1px] shrink-0" /> : <SealCheck size={14} weight="fill" className="mt-[1px] shrink-0 text-faint" />}
               <span>{f.text}</span>
@@ -152,9 +189,9 @@ function AgentMsg({ children, picks, action, flags, onAction }: { children: Reac
           ))}
         </div>
       )}
-      {picks && picks.length > 0 && (
+      {m.picks && m.picks.length > 0 && (
         <div className="flex gap-1.5 flex-wrap mt-0.5">
-          {picks.map((p) => (
+          {m.picks.map((p) => (
             <span key={p.id} className="flex items-center gap-1.5 text-[11.5px] text-ink2 bg-surface border border-hairline rounded-lg pl-1 pr-2 py-1">
               <img src={img(p.seed, 40, 71)} alt="" className="w-6 h-9 rounded object-cover" />
               <span className="max-w-[110px] truncate">{p.label}</span>
@@ -162,11 +199,38 @@ function AgentMsg({ children, picks, action, flags, onAction }: { children: Reac
           ))}
         </div>
       )}
-      {action && (
-        <button onClick={() => onAction?.(action.id)}
+      {m.action && (
+        <button onClick={() => onAction?.(m.action!.id)}
           className="self-start mt-1 text-[12.5px] font-semibold rounded-full px-3.5 py-2 bg-primary text-white hover:bg-primary2 active:scale-95 transition inline-flex items-center gap-1.5">
-          <Broadcast size={14} weight="fill" /> {action.label}
+          <Broadcast size={14} weight="fill" /> {m.action.label}
         </button>
+      )}
+    </div>
+  );
+}
+
+/* Cursor-style step row: no icons/badges — a quiet label line.
+   running = shimmering text · done = faint text · error = small warning glyph.
+   Expandable rows get a caret that rotates open; detail renders below in faint text. */
+function StepRow({ s }: { s: AgentStep }) {
+  const [open, setOpen] = useState(false);
+  const running = s.status === "running";
+  const expandable = !!s.detail;
+  return (
+    <div>
+      <button type="button" onClick={() => expandable && setOpen((o) => !o)}
+        className={`group flex items-center gap-1 py-[3px] px-1 rounded text-[12px] font-medium max-w-full ${expandable ? "cursor-pointer" : "cursor-default"}`}>
+        {s.status === "error" && <Warning size={12} weight="fill" className="shrink-0 text-reject mr-0.5" />}
+        <span className={`truncate ${running ? "gx-text-shimmer" : s.status === "error" ? "text-reject" : "text-faint group-hover:text-muted transition-colors"}`}>
+          {s.label}
+        </span>
+        {expandable && (
+          <CaretRight size={9} weight="bold"
+            className={`shrink-0 transition-transform text-faint/60 group-hover:text-muted ${open ? "rotate-90" : ""}`} />
+        )}
+      </button>
+      {open && s.detail && (
+        <div className="px-1 pt-px pb-1.5 text-[11.5px] leading-relaxed text-faint">{s.detail}</div>
       )}
     </div>
   );

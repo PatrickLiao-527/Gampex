@@ -51,6 +51,16 @@ body {
 @keyframes gx-spin { to { transform: rotate(360deg) } }
 .gx-spin { animation: gx-spin 0.8s linear infinite; }
 
+/* Cursor-style shimmering text for in-progress agent steps */
+.gx-text-shimmer {
+  background: linear-gradient(90deg, #a39e98 35%, #31302e 50%, #a39e98 65%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gx-shimmer 1.8s linear infinite;
+}
+
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: #d8d6d3; border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: #c4c1bd; background-clip: padding-box; }

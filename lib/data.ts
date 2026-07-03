@@ -4,6 +4,8 @@
 //   - source "upload": the user provides the asset → no model, no routing. Just the asset (or a request to upload it).
 // Everything visual is AI-generated now (real gameplay footage removed — the bet is AI gen replaces it). Static can be AI or upload; VO is AI.
 
+import type { AgentStep } from "./agent";
+
 export type ElementType = "ai-video" | "static" | "vo";
 
 export const ELEM: Record<ElementType, { label: string; color: string; canGenerate: boolean; canUpload: boolean }> = {
@@ -312,6 +314,8 @@ export type Shot = {
   params?: Record<string, ParamValue>;   // per-model generation parameters (aspect, duration, camera, voice…)
   // user-uploaded only:
   asset?: string;             // filename once uploaded; undefined = awaiting upload
+  assetUrl?: string;          // local object URL for preview. ★ BACKEND: replace with the CDN URL your upload endpoint returns.
+  assetKind?: "video" | "image";
   seed?: string;              // thumbnail seed for the uploaded asset
   refSeed?: string;           // 参考 state: reference frame (e.g. from a video breakdown) shown before generation
   // Per-shot audio (AI auto-fills from description, user can override)
@@ -331,6 +335,8 @@ export const PLATFORM_PRESETS: Record<Platform, { ratio: AspectRatio; duration: 
   "快手":     { ratio: "9:16", duration: "15s" },
 };
 
+export type ConceptRef = { seed: string; label: string; source: string; url?: string; kind?: "video" | "image" };
+
 export type Concept = {
   n: number;
   title: string;
@@ -342,7 +348,9 @@ export type Concept = {
   note?: string;
   reasoning: string;
   refTopic: string;
-  refs: { seed: string; label: string; source: string }[];  // style references — "what feel we're making"
+  // style references — "what feel we're making". url/kind present when user-uploaded (object URL for now;
+  // ★ BACKEND: swap to uploaded-media URL). seed keeps a stable identity + picsum fallback.
+  refs: ConceptRef[];
   shots: Shot[];
   bgm?: AudioGlobal;
   voStyle?: AudioGlobal;
@@ -754,6 +762,9 @@ export type Video = {
   lifecycle?: Lifecycle;                  // 素材生命周期状态
   created?: string;                       // 归档日期 YYYY-MM-DD
   perf?: { spend: number; ctr: number };  // 已投素材的跑量数据
+  url?: string;        // real media URL (user-uploaded ref or, later, a generated mp4). Falls back to picsum seed.
+  kind?: "video" | "image";
+  refMeta?: { cn: number; seed: string };  // which concept-ref this preview points at (for 替换参考)
 };
 
 /* ── 持久素材库存 ──
@@ -830,6 +841,10 @@ export type ChatMsg = {
   picks?: ChatPick[];               // creatives the agent selected in the library
   action?: { id: string; label: string };  // one-tap continuation (e.g. 生成计划 / 确认发布)
   flags?: { tone: "warn" | "info"; text: string }[];  // agent 的确认点/风险提示
+  /** Agent work-trace (thinking / tool calls) rendered above the reply text. Protocol: lib/agent.ts. */
+  steps?: AgentStep[];
+  /** True while the reply is still streaming in — renders a caret and keeps the composer in busy state. */
+  streaming?: boolean;
 };
 
 export const initialMessages: ChatMsg[] = [
