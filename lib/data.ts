@@ -710,6 +710,34 @@ export const initialConcepts: Concept[] = [
 ];
 
 export type VideoState = "use" | "no" | "pending";
+
+/* AI 质检报告 —— 对齐 SME 参考控制台（43.199.36.184/material-generate.html）第五步：
+   视频拆帧 → 关键帧识别 → 与预期标签比对，百分制，5 个维度加权。 */
+export type QcDim = { label: string; weight: number; score: number };
+export type QcReport = { total: number; dims: QcDim[] };
+
+const QC_DIMS: { label: string; weight: number }[] = [
+  { label: "标签匹配度", weight: 60 },
+  { label: "风格一致性", weight: 15 },
+  { label: "角色一致性", weight: 10 },
+  { label: "参考图一致性", weight: 10 },
+  { label: "合规审查", weight: 5 },
+];
+
+// Deterministic per-seed mock so scores are stable across re-renders.
+export function mockQc(seed: string): QcReport {
+  let h = 0;
+  for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const dims = QC_DIMS.map((d, i) => {
+    const jitter = ((h >> (i * 5)) % 21) - 6;           // -6..14
+    return { ...d, score: Math.max(58, Math.min(99, 84 + jitter)) };
+  });
+  const total = Math.round(dims.reduce((n, d) => n + d.score * d.weight, 0) / 100);
+  return { total, dims };
+}
+
+export type Lifecycle = "新素材" | "投放中" | "衰退";
+
 export type Video = {
   id: string;
   label: string;
@@ -720,7 +748,53 @@ export type Video = {
   state: VideoState;
   isRef?: boolean;     // a style reference, not a generated result
   refSource?: string;  // where the reference comes from
+  qc?: QcReport;       // AI 质检打分（留存素材必有）
+  tags?: string[];     // 预期标签（质检基准）
+  brief?: string;      // 原始需求一句话（生成链路溯源）
+  lifecycle?: Lifecycle;                  // 素材生命周期状态
+  created?: string;                       // 归档日期 YYYY-MM-DD
+  perf?: { spend: number; ctr: number };  // 已投素材的跑量数据
 };
+
+/* ── 持久素材库存 ──
+   真实投手管理的是几百上千条持续累积的素材，不是一次会话生成的几条。
+   128 条确定性 mock（种子哈希，服务端/客户端渲染一致），带满管理属性：
+   生命周期、归档日期、跑量数据、标签 —— sort/filter 才有意义。 */
+const LIB_BASE = Date.parse("2026-07-03");
+function h32(s: string): number {
+  let h = 0;
+  for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+}
+export const libraryVideos: Video[] = (() => {
+  const channels = ["巨量", "TikTok", "快手", "腾讯广告"];
+  const hooks = ["连击爽感", "数字暴涨", "剧情反转", "真人实拍", "评测口播", "开箱挑战", "登顶时刻", "武将觉醒"];
+  const specs: [string, string][] = [["9:16", "15s"], ["9:16", "30s"], ["16:9", "30s"], ["1:1", "15s"], ["9:16", "45s"]];
+  const out: Video[] = [];
+  for (let i = 0; i < 128; i++) {
+    const hh = h32(`lib${i}`);
+    const hook = hooks[hh % hooks.length];
+    const [ratio, dur] = specs[(hh >>> 6) % specs.length];
+    const seed = `lib${i}`;
+    const roll = (hh >>> 9) % 10;
+    const lifecycle: Lifecycle = roll < 3 ? "新素材" : roll < 8 ? "投放中" : "衰退";
+    const daysAgo = (hh >>> 4) % 90;
+    out.push({
+      id: `lib-${i}`,
+      label: `${hook} v${(i % 24) + 1}`,
+      channel: channels[(hh >>> 3) % channels.length],
+      dur, ratio, seed,
+      state: "pending",
+      qc: mockQc(seed),
+      tags: [hook, `${ratio} 竖版`, "买量转化"],
+      brief: `${hook}方向 · 批次 ${Math.floor(i / 16) + 1}`,
+      lifecycle,
+      created: new Date(LIB_BASE - daysAgo * 864e5).toISOString().slice(0, 10),
+      perf: lifecycle === "新素材" ? undefined : { spend: 300 + (hh % 97) * 85, ctr: +(1.2 + ((hh >>> 7) % 140) / 40).toFixed(2) },
+    });
+  }
+  return out;
+})();
 
 function buildReview(): Video[] {
   const out: Video[] = [];
@@ -746,12 +820,16 @@ function buildReview(): Video[] {
 export const reviewVideos = buildReview();
 
 export type ChatAttachment = { id: string; name: string; kind: "image" | "video"; url?: string };
+export type ChatPick = { id: string; seed: string; label: string };
 export type ChatMsg = {
   role: "u" | "a";
   text: string;
   refs?: boolean;
   attachments?: ChatAttachment[];
   jump?: { label: string; to: number };
+  picks?: ChatPick[];               // creatives the agent selected in the library
+  action?: { id: string; label: string };  // one-tap continuation (e.g. 生成计划 / 确认发布)
+  flags?: { tone: "warn" | "info"; text: string }[];  // agent 的确认点/风险提示
 };
 
 export const initialMessages: ChatMsg[] = [
@@ -762,6 +840,12 @@ export const initialMessages: ChatMsg[] = [
   { role: "u", text: "选 1、2、3，生成。" },
   { role: "a", text: "好。AI 元素直接生成，缺的实拍素材我会提示你补传 →", jump: { label: "② 生成进度", to: 1 } },
   { role: "a", text: "12 个素材已生成。你之前的调整已记录到数据集，下次路由会更准 →", jump: { label: "③ 预览 · 挑选素材", to: 2 } },
+];
+
+/* 素材库常驻的投放助手。旅程三步：① 选素材（自己勾 or agent 挑，两个入口汇合）
+   → ② 定计划（agent 铺初版，对话里调）→ ③ 发布（对话里确认，进盯盘）。 */
+export const initialDeployMessages: ChatMsg[] = [
+  { role: "a", text: "第 1 步 · 选素材。勾选左边你要投的成片，或者把目标告诉我（比如「挑质检分最高的 3 条」），我来选。选好之后点「生成计划」进入第 2 步，计划就在这条对话里聊定、确认发布。" },
 ];
 
 export const img = (seed: string, w: number, h: number) =>
@@ -866,8 +950,9 @@ function pick<T>(arr: T[], start: number, n: number): T[] {
 export function buildInitialPlan(creativeIds: string[], product = "星轨"): DeployPlan {
   const ids = creativeIds.length ? creativeIds : ["c1", "c2", "c3", "c4"];
   let k = 0;
+  // Never fabricate ads: a group can't run more ads than there are creatives.
   const grp = (id: string, device: string, budget: number, bid: number, ratio: AspectRatio, n: number): PlanGroup =>
-    ({ id, device, budget, bid, ratio, creativeIds: pick(ids, (k += 2), n) });
+    ({ id, device, budget, bid, ratio, creativeIds: pick(ids, (k += 2), Math.min(n, ids.length)) });
   const series = (id: string, geo: string, groups: PlanGroup[]): PlanSeries => ({ id, geo, audience: "男 18-24", groups });
   return {
     product,

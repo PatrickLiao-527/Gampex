@@ -7,9 +7,12 @@ import { Image as ImageIcon } from "@phosphor-icons/react/dist/csr/Image";
 import { VideoCamera } from "@phosphor-icons/react/dist/csr/VideoCamera";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
 import { X } from "@phosphor-icons/react/dist/csr/X";
+import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
+import { SealCheck } from "@phosphor-icons/react/dist/csr/SealCheck";
 import { Tooltip } from "./ui";
 import { type Project } from "./types";
-import { img, type ChatMsg, type ChatAttachment } from "@/lib/data";
+import { img, type ChatMsg, type ChatAttachment, type ChatPick } from "@/lib/data";
 
 let attSeq = 0;
 function filesToAttachments(files: FileList | null, kind: "image" | "video"): ChatAttachment[] {
@@ -19,8 +22,18 @@ function filesToAttachments(files: FileList | null, kind: "image" | "video"): Ch
   }));
 }
 
-export function Chat({ project, messages, onClose, onSend }: { project: Project; messages: ChatMsg[]; onClose: () => void; onSend: (t: string, attachments?: ChatAttachment[]) => void }) {
-  const [input, setInput] = useState("");
+export function Chat({ project, messages, onClose, onSend, badge, placeholder, suggestions, onSuggest, onAction, composer }: {
+  project: Project; messages: ChatMsg[]; onClose: () => void; onSend: (t: string, attachments?: ChatAttachment[]) => void;
+  badge?: string;                       // context tag next to the project name (e.g. 投放助手)
+  placeholder?: string;
+  suggestions?: string[];               // one-tap prompts shown under the last agent message
+  onSuggest?: (t: string) => void;
+  onAction?: (id: string) => void;      // message.action clicks (e.g. 生成计划 / 确认发布)
+  composer?: { value: string; onChange: (v: string) => void };  // controlled input (面板点击预填)
+}) {
+  const [inputInternal, setInputInternal] = useState("");
+  const input = composer ? composer.value : inputInternal;
+  const setInput = composer ? composer.onChange : setInputInternal;
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const threadRef = useRef<HTMLDivElement>(null);
   const imgInput = useRef<HTMLInputElement>(null);
@@ -38,13 +51,23 @@ export function Chat({ project, messages, onClose, onSend }: { project: Project;
     <section className="w-full h-full bg-canvassoft flex flex-col overflow-hidden">
       <header className="px-4 h-[49px] shrink-0 border-b border-hairline flex items-center gap-2">
         <span className="text-[13px] font-bold tracking-tight truncate">{project.name}</span>
+        {badge && <span className="text-[10.5px] font-semibold text-primary bg-tint border border-tintborder rounded-full px-2 py-0.5 whitespace-nowrap">{badge}</span>}
         <span className="flex-1" />
         <Tooltip label="收起对话" side="bottom">
           <button onClick={onClose} className="w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink2 hover:bg-hair2 transition-colors"><SidebarSimple size={16} className="-scale-x-100" /></button>
         </Tooltip>
       </header>
       <div ref={threadRef} className="flex-1 overflow-y-auto p-[18px] flex flex-col gap-4">
-        {messages.map((m, i) => m.role === "u" ? <UserMsg key={i} refs={m.refs} attachments={m.attachments}>{m.text}</UserMsg> : <AgentMsg key={i}>{m.text}</AgentMsg>)}
+        {messages.map((m, i) => m.role === "u"
+          ? <UserMsg key={i} refs={m.refs} attachments={m.attachments}>{m.text}</UserMsg>
+          : <AgentMsg key={i} picks={m.picks} action={m.action} flags={m.flags} onAction={onAction}>{m.text}</AgentMsg>)}
+        {suggestions && suggestions.length > 0 && messages[messages.length - 1]?.role === "a" && (
+          <div className="flex flex-wrap gap-1.5">
+            {suggestions.map((s) => (
+              <button key={s} onClick={() => onSuggest?.(s)} className="text-[12px] text-ink2 bg-surface border border-hairline rounded-full px-2.5 py-1.5 hover:bg-canvas hover:border-tintborder active:scale-95 transition">{s}</button>
+            ))}
+          </div>
+        )}
       </div>
       <div className="p-3.5 pt-2.5">
         <div className="bg-surface border border-hairline rounded-2xl px-3 py-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
@@ -55,7 +78,7 @@ export function Chat({ project, messages, onClose, onSend }: { project: Project;
           )}
           <textarea rows={1} value={input} onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
-            placeholder="继续聊，或上传参考…" className="w-full resize-none outline-none bg-transparent text-[13.5px] leading-snug text-ink placeholder:text-faint" />
+            placeholder={placeholder ?? "继续聊，或上传参考…"} className="w-full resize-none outline-none bg-transparent text-[13.5px] leading-snug text-ink placeholder:text-faint" />
           <div className="flex items-center gap-1 mt-1.5">
             <Tooltip label="上传图片参考" side="top"><ComposerTool aria-label="上传图片参考" onClick={() => imgInput.current?.click()}><ImageIcon size={15} /> 图片</ComposerTool></Tooltip>
             <Tooltip label="上传视频参考" side="top"><ComposerTool aria-label="上传视频参考" onClick={() => vidInput.current?.click()}><VideoCamera size={15} /> 视频</ComposerTool></Tooltip>
@@ -114,11 +137,37 @@ function RefChip({ children }: { children: React.ReactNode }) {
   return <span className="flex items-center gap-1.5 text-[11.5px] text-ink2 bg-surface border border-hairline rounded-lg pl-1 pr-2 py-1">{children}</span>;
 }
 
-function AgentMsg({ children }: { children: React.ReactNode }) {
+function AgentMsg({ children, picks, action, flags, onAction }: { children: React.ReactNode; picks?: ChatPick[]; action?: { id: string; label: string }; flags?: { tone: "warn" | "info"; text: string }[]; onAction?: (id: string) => void }) {
   return (
     <div className="flex flex-col gap-1.5">
       <div className="text-[11px] font-semibold text-faint flex items-center gap-1.5"><span className="w-[15px] h-[15px] rounded bg-primary text-white grid place-items-center text-[9px] font-bold">G</span>Gampex</div>
-      <div className="text-[13.5px] leading-relaxed text-ink2">{children}</div>
+      <div className="text-[13.5px] leading-relaxed text-ink2 whitespace-pre-line">{children}</div>
+      {flags && flags.length > 0 && (
+        <div className="flex flex-col gap-1.5 mt-1">
+          {flags.map((f) => (
+            <div key={f.text} className={`flex items-start gap-1.5 text-[12.5px] rounded-lg px-2.5 py-2 border ${f.tone === "warn" ? "bg-modbg border-[#f5e3bf] text-[#92610a]" : "bg-canvas border-hairline text-muted"}`}>
+              {f.tone === "warn" ? <Warning size={14} weight="fill" className="mt-[1px] shrink-0" /> : <SealCheck size={14} weight="fill" className="mt-[1px] shrink-0 text-faint" />}
+              <span>{f.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {picks && picks.length > 0 && (
+        <div className="flex gap-1.5 flex-wrap mt-0.5">
+          {picks.map((p) => (
+            <span key={p.id} className="flex items-center gap-1.5 text-[11.5px] text-ink2 bg-surface border border-hairline rounded-lg pl-1 pr-2 py-1">
+              <img src={img(p.seed, 40, 71)} alt="" className="w-6 h-9 rounded object-cover" />
+              <span className="max-w-[110px] truncate">{p.label}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {action && (
+        <button onClick={() => onAction?.(action.id)}
+          className="self-start mt-1 text-[12.5px] font-semibold rounded-full px-3.5 py-2 bg-primary text-white hover:bg-primary2 active:scale-95 transition inline-flex items-center gap-1.5">
+          <Broadcast size={14} weight="fill" /> {action.label}
+        </button>
+      )}
     </div>
   );
 }
